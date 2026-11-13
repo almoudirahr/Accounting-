@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>شات الفندق (ملف واحد)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; }
+  body { background: #d1d7db; height: 100vh; display: flex; justify-content: center; align-items: center; }
+  
+  /* شاشة الدخول */
+  #login-screen { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.2); width: 90%; max-width: 400px; text-align: center; }
+  #login-screen h2 { color: #075e54; margin-bottom: 20px; }
+  #login-screen input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
+  #login-screen button { width: 100%; padding: 12px; background: #075e54; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: bold; }
+  
+  /* واجهة الشات */
+  #app { display: none; width: 100%; max-width: 550px; height: 95vh; background: #efeae2; border-radius: 12px; overflow: hidden; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,.2); position: relative; }
+  #header { background: #075e54; color: #fff; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; }
+  #header h3 { font-size: 15px; }
+  #header p { font-size: 11px; opacity: .8; }
+  #logout { background: #c0392b; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  
+  #messages { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 80%; padding: 8px 12px; border-radius: 8px; font-size: 14px; line-height: 1.4; word-wrap: break-word; display: flex; flex-direction: column; }
+  .me { align-self: flex-start; background: #dcf8c6; border-top-left-radius: 0; }
+  .other { align-self: flex-end; background: #fff; border-top-right-radius: 0; }
+  .sender { font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #075e54; }
+  .time { font-size: 10px; opacity: .6; margin-top: 4px; text-align: left; }
+  
+  /* وسائط */
+  .msg img { max-width: 100%; border-radius: 6px; margin-top: 5px; cursor: pointer; }
+  .msg audio { max-width: 100%; margin-top: 5px; outline: none; }
+  .msg a { color: #075e54; font-weight: bold; text-decoration: none; background: #e0e0e0; padding: 8px; border-radius: 5px; display: block; margin-top: 5px; text-align: center; }
+  
+  /* الإدخال */
+  #form { display: flex; padding: 8px; background: #f0f0f0; gap: 6px; align-items: center; }
+  #text { flex: 1; padding: 10px 14px; border: none; border-radius: 20px; font-size: 14px; outline: none; }
+  .icon-btn { background: none; border: none; font-size: 22px; cursor: pointer; color: #555; padding: 5px; }
+  #send-btn { width: 42px; height: 42px; border: none; border-radius: 50%; background: #075e54; color: #fff; font-size: 18px; cursor: pointer; }
+  
+  #recording-status { display: none; color: red; font-weight: bold; position: absolute; top: 60px; left: 50%; transform: translateX(-50%); background: white; padding: 5px 15px; border-radius: 20px; box-shadow: 0 2px 10px rgba(0,0,0,.2); z-index: 10; }
+  .empty { text-align: center; color: #888; font-size: 13px; margin-top: 40px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <h2>📱 تسجيل الدخول</h2>
+  <input type="text" id="user-id" placeholder="رقمك الوهمي (مثال: 1001)" />
+  <input type="text" id="user-name" placeholder="اسمك (مثال: المديرة)" />
+  <button id="btn-login">دخول</button>
+</div>
+
+<div id="app">
+  <div id="recording-status">🎤 جاري التسجيل... (اضغطي الزر مرة أخرى للإنهاء)</div>
+  <div id="header">
+    <div>
+      <h3 id="chat-title">الشات</h3>
+      <p id="chat-id">ID: -</p>
+    </div>
+    <button id="logout">خروج</button>
+  </div>
+  
+  <div id="messages">
+    <div class="empty" id="empty-msg">لا توجد رسائل بعد — ابدئي المحادثة 💬</div>
+  </div>
+  
+  <form id="form">
+    <label class="icon-btn" title="إرسال صورة/ملف">
+      📎 <input type="file" id="file-input" style="display: none;" />
+    </label>
+    <input type="text" id="text" placeholder="اكتب رسالة..." autocomplete="off" />
+    <button type="button" class="icon-btn" id="btn-record" title="تسجيل صوتي">🎤</button>
+    <button type="submit" id="send-btn">➤</button>
+  </form>
+</div>
+
+<script>
+// ==========================================
+// إعداد قاعدة البيانات المحلية (IndexedDB)
+// ==========================================
+let db;
+const dbRequest = indexedDB.open("HotelChatDB", 1);
+
+dbRequest.onupgradeneeded = (e) => {
+  db = e.target.result;
+  if (!db.objectStoreNames.contains("messages")) {
+    db.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
+  }
+};
+
+dbRequest.onsuccess = (e) => {
+  db = e.target.result;
+  loadMessages();
+};
+
+// ==========================================
+// المتغيرات الأساسية
+// ==========================================
+let currentUser = null;
+let mediaRecorder;
+let audioChunks = [];
+
+// ==========================================
+// تسجيل الدخول والخروج
+// ==========================================
+document.getElementById('btn-login').addEventListener('click', () => {
+  const id = document.getElementById('user-id').value.trim();
+  const name = document.getElementById('user-name').value.trim();
+  if (!id || !name) return alert("⚠️ أدخلي الرقم والاسم");
+  
+  currentUser = { id, name };
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('chat-title').textContent = name;
+  document.getElementById('chat-id').textContent = "ID: " + id;
+  
+  loadMessages();
+});
+
+document.getElementById('logout').addEventListener('click', () => location.reload());
+
+// ==========================================
+// إدارة الرسائل (حفظ، عرض، إرسال)
+// ==========================================
+function saveMessage(msg, callback) {
+  const transaction = db.transaction(["messages"], "readwrite");
+  const store = transaction.objectStore("messages");
+  const request = store.add(msg);
+  request.onsuccess = () => { if(callback) callback(); };
+}
+
+function loadMessages() {
+  const container = document.getElementById('messages');
+  container.innerHTML = '';
+  
+  const transaction = db.transaction(["messages"], "readonly");
+  const store = transaction.objectStore("messages");
+  const request = store.getAll();
+  
+  request.onsuccess = () => {
+    const msgs = request.result;
+    if (msgs.length === 0) {
+      container.innerHTML = '<div class="empty" id="empty-msg">لا توجد رسائل بعد — ابدئي المحادثة 💬</div>';
+      return;
+    }
+    msgs.forEach(msg => renderMessage(msg));
+    container.scrollTop = container.scrollHeight;
+  };
+}
+
+function renderMessage(msg) {
+  const empty = document.getElementById('empty-msg');
+  if (empty) empty.remove();
+
+  const div = document.createElement('div');
+  const mine = msg.senderId === currentUser.id;
+  div.className = 'msg ' + (mine ? 'me' : 'other');
+  
+  let content = `<div class="sender">${msg.senderName} (ID: ${msg.senderId})</div>`;
+  
+  if (msg.text) content += `<div>${msg.text}</div>`;
+  
+  if (msg.fileData) {
+    if (msg.fileType.startsWith('image/')) {
+      content += `<img src="${msg.fileData}" onclick="window.open(this.src)">`;
+    } else if (msg.fileType.startsWith('audio/')) {
+      content += `<audio controls src="${msg.fileData}"></audio>`;
+    } else {
+      content += `<a href="${msg.fileData}" download="${msg.fileName}">📄 تحميل ${msg.fileName}</a>`;
+    }
+  }
+  
+  content += `<div class="time">${msg.time}</div>`;
+  div.innerHTML = content;
+  
+  document.getElementById('messages').appendChild(div);
+  document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+}
+
+// إرسال نص
+document.getElementById('form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = document.getElementById('text').value.trim();
+  if (!text) return;
+  
+  const msg = {
+    senderId: currentUser.id,
+    senderName: currentUser.name,
+    text: text,
+    time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  };
+  
+  saveMessage(msg, loadMessages);
+  document.getElementById('text').value = '';
+});
+
+// إرسال ملفات (صور، إكسيل، الخ)
+document.getElementById('file-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const msg = {
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      fileData: event.target.result,
+      fileType: file.type,
+      fileName: file.name,
+      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    };
+    saveMessage(msg, loadMessages);
+  };
+  reader.readAsDataURL(file);
+  e.target.value = ''; // تصفير
+});
+
+// ==========================================
+// التسجيل الصوتي
+// ==========================================
+document.getElementById('btn-record').addEventListener('click', async () => {
+  const status = document.getElementById('recording-status');
+  
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    status.style.display = 'none';
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const reader = new FileReader();
+      
+      reader.onload = (event) => {
+        const msg = {
+          senderId: currentUser.id,
+          senderName: currentUser.name,
+          fileData: event.target.result,
+          fileType: 'audio/webm',
+          fileName: 'تسجيل_صوتي.webm',
+          time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+        };
+        saveMessage(msg, loadMessages);
+      };
+      reader.readAsDataURL(audioBlob);
+    };
+
+    mediaRecorder.start();
+    status.style.display = 'block';
+  } catch (err) {
+    alert("⚠️ المتصفح يمنع الوصول للميكروفون. يرجى إعطاء الإذن.");
+  }
+});
+</script>
+</body>
+</html>
